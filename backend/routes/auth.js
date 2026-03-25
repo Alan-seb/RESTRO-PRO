@@ -7,23 +7,44 @@ const { pool } = require('../db');
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+  console.log(`[AUTH] Login attempt for: ${email}`);
+  
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  
   try {
     const result = await pool.query('SELECT * FROM users WHERE email=$1', [email]);
     const user = result.rows[0];
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    if (!user) {
+      console.log(`[AUTH] User not found: ${email}`);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!valid) {
+      console.log(`[AUTH] Invalid password for: ${email}`);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    if (!process.env.JWT_SECRET) {
+      console.error('[AUTH] CRITICAL: JWT_SECRET is missing from environment variables!');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role, name: user.name },
       process.env.JWT_SECRET,
       { expiresIn: '8h' }
     );
+    
+    console.log(`[AUTH] Login successful: ${user.name} (${user.role})`);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
+    console.error(`[AUTH] Error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {

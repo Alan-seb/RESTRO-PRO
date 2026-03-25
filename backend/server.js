@@ -9,9 +9,10 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: true, // Dynamically allow the current origin
   credentials: true,
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,11 +37,19 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-const PORT = process.env.PORT || 5000;
+// Export the app for Vercel serverless functions
+module.exports = app;
 
-initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-}).catch(err => {
-  console.error('Failed to initialize DB:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  const PORT = process.env.PORT || 5001;
+  initDB().then(() => {
+    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+  }).catch(err => {
+    console.error('Failed to initialize DB:', err);
+    process.exit(1);
+  });
+} else {
+  // When imported by Vercel, still initialize DB if possible (though on-demand might be better)
+  initDB().catch(console.error);
+}
+

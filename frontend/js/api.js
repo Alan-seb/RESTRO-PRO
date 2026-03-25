@@ -1,7 +1,8 @@
 // API Base URL - change this to your deployed backend URL
 const API_BASE = window.location.hostname === 'localhost' 
-  ? 'http://localhost:5000/api'
+  ? 'http://localhost:5001/api'
   : '/api'; // When served from same Vercel deployment
+
 
 const api = {
   _getToken: () => localStorage.getItem('rms_token'),
