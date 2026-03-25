@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Billing — Restaurant MS</title>
+  <link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<script src="../js/api.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+renderLayout('billing.html');
+const main = document.getElementById('main-content');
+main.innerHTML = `
+  <div class="page-header">
+    <div><h1 class="page-title">Billing</h1><p class="page-subtitle">View and manage all bills & payments</p></div>
+    <button class="btn btn-secondary" onclick="loadStats()">📊 Revenue Stats</button>
+  </div>
+  <div class="stats-grid" id="bill-stats"></div>
+  <div class="filters-bar">
+    <select class="form-control" style="width:160px" id="payFilter" onchange="loadBills()">
+      <option value="">All Bills</option>
+      <option value="unpaid">Unpaid</option>
+      <option value="paid">Paid</option>
+    </select>
+    <input type="date" class="form-control" style="width:170px" id="dateFilter" onchange="loadBills()">
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:0">
+      <div class="table-wrap" id="bills-table"><div class="loading-center"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+  <div id="modal-area"></div>
+`;
+
+async function loadBills(){
+  const ps   = document.getElementById('payFilter').value;
+  const date = document.getElementById('dateFilter').value;
+  let url = '/bills?';
+  if(ps)   url+=`payment_status=${ps}&`;
+  if(date) url+=`date=${date}`;
+  try{
+    const bills = await api.get(url);
+    renderBills(bills);
+    // Quick totals
+    const total   = bills.reduce((s,b)=>s+parseFloat(b.total),0);
+    const paid    = bills.filter(b=>b.payment_status==='paid').reduce((s,b)=>s+parseFloat(b.total),0);
+    const unpaid  = bills.filter(b=>b.payment_status==='unpaid').reduce((s,b)=>s+parseFloat(b.total),0);
+    document.getElementById('bill-stats').innerHTML=`
+      <div class="stat-card" style="--accent:var(--green)">
+        <div class="stat-label">Total Revenue</div>
+        <div class="stat-value">${formatCurrency(total)}</div>
+        <div class="stat-meta">${bills.length} bills</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--gold)">
+        <div class="stat-label">Collected</div>
+        <div class="stat-value">${formatCurrency(paid)}</div>
+        <div class="stat-meta">${bills.filter(b=>b.payment_status==='paid').length} paid</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--red)">
+        <div class="stat-label">Outstanding</div>
+        <div class="stat-value">${formatCurrency(unpaid)}</div>
+        <div class="stat-meta">${bills.filter(b=>b.payment_status==='unpaid').length} unpaid</div>
+      </div>
+    `;
+  }catch(e){Toast.error(e.message);}
+}
+
+function renderBills(bills){
+  const wrap = document.getElementById('bills-table');
+  if(!bills.length){
+    wrap.innerHTML='<div class="empty-state"><div class="empty-icon">🧾</div><p>No bills found</p></div>';
+    return;
+  }
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Bill #</th><th>Order #</th><th>Table</th><th>Subtotal</th><th>Tax</th><th>Discount</th><th>Total</th><th>Method</th><th>Status</th><th>Time</th><th>Actions</th></tr></thead>
+    <tbody>${bills.map(b=>`
+      <tr>
+        <td class="fw-600">#${b.id}</td>
+        <td>#${b.order_id}</td>
+        <td>${b.table_number||'—'}</td>
+        <td>${formatCurrency(b.subtotal)}</td>
+        <td>${formatCurrency(b.tax_amount)}</td>
+        <td>${formatCurrency(b.discount)}</td>
+        <td class="fw-600 text-gold">${formatCurrency(b.total)}</td>
+        <td>${b.payment_method}</td>
+        <td><span class="badge badge-${b.payment_status}">${b.payment_status}</span></td>
+        <td style="font-size:.8rem;color:var(--text-muted)">${formatDate(b.created_at)}</td>
+        <td>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" onclick='viewBill(${JSON.stringify(b)})'>View</button>
+            ${b.payment_status==='unpaid'?`<button class="btn btn-success btn-sm" onclick="markPaid(${b.id})">Mark Paid</button>`:''}
+          </div>
+        </td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+function viewBill(b){
+  showModal(`Bill #${b.id}`,`
+    <div id="bill-print" style="font-family:'DM Sans',sans-serif">
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:1.4rem;font-weight:700">🍽️ Restaurant MS</div>
+        <div style="font-size:.8rem;color:var(--text-muted)">Tax Invoice</div>
+      </div>
+      <table style="font-size:.85rem;width:100%;margin-bottom:12px">
+        <tr><td class="text-muted">Bill #</td><td class="fw-600">${b.id}</td><td class="text-muted">Order #</td><td>${b.order_id}</td></tr>
+        <tr><td class="text-muted">Table</td><td>${b.table_number||'—'}</td><td class="text-muted">Date</td><td style="font-size:.78rem">${formatDate(b.created_at)}</td></tr>
+        <tr><td class="text-muted">Staff</td><td colspan="3">${b.staff_name||'—'}</td></tr>
+      </table>
+      <hr style="border-color:var(--border);margin:12px 0">
+      <table style="font-size:.875rem;width:100%">
+        <tr><td>Subtotal</td><td style="text-align:right">${formatCurrency(b.subtotal)}</td></tr>
+        <tr><td>Tax (${b.tax_rate}%)</td><td style="text-align:right">${formatCurrency(b.tax_amount)}</td></tr>
+        <tr><td>Discount</td><td style="text-align:right">−${formatCurrency(b.discount)}</td></tr>
+        <tr style="font-size:1.05rem"><td class="fw-600">Total</td><td style="text-align:right;color:var(--gold);font-weight:700">${formatCurrency(b.total)}</td></tr>
+      </table>
+      <hr style="border-color:var(--border);margin:12px 0">
+      <div style="display:flex;justify-content:space-between;font-size:.85rem">
+        <span class="text-muted">Payment Method</span><span>${b.payment_method}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-top:6px">
+        <span class="text-muted">Status</span><span class="badge badge-${b.payment_status}">${b.payment_status}</span>
+      </div>
+    </div>
+  `,`<button class="btn btn-secondary" onclick="window.print()">🖨 Print</button>${b.payment_status==='unpaid'?`<button class="btn btn-success" onclick="markPaid(${b.id})">Mark Paid</button>`:''}`);
+}
+
+async function markPaid(billId){
+  const method = prompt('Payment method? (cash / card / upi / wallet)', 'cash');
+  if(!method) return;
+  try{
+    await api.patch(`/bills/${billId}/pay`, {payment_method: method});
+    Toast.success('Payment recorded!');
+    closeModal(); loadBills();
+  }catch(e){Toast.error(e.message);}
+}
+
+async function loadStats(){
+  try{
+    const stats = await api.get('/bills/stats/daily');
+    if(!stats.length) return Toast.info('No revenue data found');
+    showModal('Revenue Stats (Last 30 days)',`
+      <div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Bills</th><th>Revenue</th><th>Collected</th><th>Discounts</th></tr></thead>
+        <tbody>${stats.map(s=>`
+          <tr>
+            <td>${new Date(s.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+            <td>${s.total_bills}</td>
+            <td>${formatCurrency(s.revenue)}</td>
+            <td class="text-green fw-600">${formatCurrency(s.collected)}</td>
+            <td class="text-red">${formatCurrency(s.total_discounts)}</td>
+          </tr>`).join('')}
+        </tbody></table></div>
+    `,'',true);
+  }catch(e){Toast.error(e.message);}
+}
+
+function showModal(title,body,footer='',wide=false){
+  document.getElementById('modal-area').innerHTML=`
+    <div class="modal-backdrop" id="modalBackdrop" onclick="backdropClose(event)">
+      <div class="modal" style="${wide?'max-width:700px':''}">
+        <div class="modal-header"><span class="modal-title">${title}</span><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${body}</div>
+        ${footer?`<div class="modal-footer">${footer}</div>`:''}
+      </div>
+    </div>`;
+}
+function closeModal(){document.getElementById('modal-area').innerHTML='';}
+function backdropClose(e){if(e.target.id==='modalBackdrop')closeModal();}
+
+loadBills();
+</script>
+</body>
+</html>

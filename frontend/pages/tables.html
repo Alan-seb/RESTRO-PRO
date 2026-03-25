@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tables — Restaurant MS</title>
+  <link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<script src="../js/api.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+renderLayout('tables.html');
+const main = document.getElementById('main-content');
+main.innerHTML = `
+  <div class="page-header">
+    <div><h1 class="page-title">Tables</h1><p class="page-subtitle">Floor plan & table status</p></div>
+    <button class="btn btn-primary" onclick="openAddTable()">＋ Add Table</button>
+  </div>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px" id="legend">
+    <span style="font-size:.8rem;color:var(--text-muted)">Legend:</span>
+    <span class="badge badge-available">Available</span>
+    <span class="badge badge-occupied">Occupied</span>
+    <span class="badge badge-reserved">Reserved</span>
+    <span class="badge badge-cleaning">Cleaning</span>
+  </div>
+  <div class="tables-grid" id="tables-grid"><div class="loading-center"><div class="spinner"></div></div></div>
+  <div id="modal-area"></div>
+`;
+
+async function loadTables(){
+  try{
+    const tables = await api.get('/tables');
+    const grid   = document.getElementById('tables-grid');
+    if(!tables.length){
+      grid.innerHTML='<div class="empty-state"><div class="empty-icon">🪑</div><p>No tables added yet</p></div>';
+      return;
+    }
+    grid.innerHTML = tables.map(t=>`
+      <div class="table-card ${t.status}" onclick="openTableMenu(${t.id},'${t.table_number}','${t.status}')">
+        <div class="table-num">${t.table_number}</div>
+        <div class="table-cap">👥 ${t.capacity} seats</div>
+        <span class="badge badge-${t.status}" style="margin-top:10px">${t.status}</span>
+      </div>`).join('');
+  }catch(e){Toast.error(e.message);}
+}
+
+function openTableMenu(id, num, status){
+  const statuses = ['available','occupied','reserved','cleaning'];
+  showModal(`Table ${num}`,`
+    <p style="color:var(--text-muted);margin-bottom:16px">Current status: <span class="badge badge-${status}">${status}</span></p>
+    <div class="form-group">
+      <label class="form-label">Change Status</label>
+      <select class="form-control" id="newTableStatus">
+        ${statuses.map(s=>`<option value="${s}"${s===status?' selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
+      </select>
+    </div>
+  `,`<button class="btn btn-primary" onclick="updateTableStatus(${id})">Update Status</button>`);
+}
+
+async function updateTableStatus(id){
+  const status = document.getElementById('newTableStatus').value;
+  try{
+    await api.patch(`/tables/${id}/status`, {status});
+    Toast.success('Table status updated');
+    closeModal(); loadTables();
+  }catch(e){Toast.error(e.message);}
+}
+
+function openAddTable(){
+  showModal('Add Table',`
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Table Number / Name</label>
+        <input class="form-control" id="tNum" placeholder="e.g. T9 or VIP-1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Seating Capacity</label>
+        <input class="form-control" id="tCap" type="number" min="1" value="4">
+      </div>
+    </div>
+  `,`<button class="btn btn-primary" onclick="addTable()">Add Table</button>`);
+}
+
+async function addTable(){
+  const num = document.getElementById('tNum').value.trim();
+  const cap = parseInt(document.getElementById('tCap').value);
+  if(!num) return Toast.error('Enter table number');
+  if(!cap || cap<1) return Toast.error('Enter valid capacity');
+  try{
+    await api.post('/tables', {table_number:num, capacity:cap});
+    Toast.success('Table added!');
+    closeModal(); loadTables();
+  }catch(e){Toast.error(e.message);}
+}
+
+function showModal(title,body,footer=''){
+  document.getElementById('modal-area').innerHTML=`
+    <div class="modal-backdrop" id="modalBackdrop" onclick="backdropClose(event)">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">${title}</span>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">${body}</div>
+        ${footer?`<div class="modal-footer">${footer}</div>`:''}
+      </div>
+    </div>`;
+}
+function closeModal(){document.getElementById('modal-area').innerHTML='';}
+function backdropClose(e){if(e.target.id==='modalBackdrop')closeModal();}
+
+loadTables();
+</script>
+</body>
+</html>

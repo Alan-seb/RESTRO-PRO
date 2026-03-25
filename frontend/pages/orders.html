@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orders — Restaurant MS</title>
+  <link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<script src="../js/api.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+renderLayout('orders.html');
+const main = document.getElementById('main-content');
+main.innerHTML = `
+  <div class="page-header">
+    <div><h1 class="page-title">Orders</h1><p class="page-subtitle">Manage all dine-in, takeaway and delivery orders</p></div>
+    <button class="btn btn-primary" onclick="openNewOrderModal()">＋ New Order</button>
+  </div>
+  <div class="filters-bar">
+    <input class="form-control search-box" id="searchInput" placeholder="Search orders…" oninput="filterOrders()">
+    <select class="form-control" style="width:160px" id="statusFilter" onchange="loadOrders()">
+      <option value="">All Statuses</option>
+      <option value="pending">Pending</option>
+      <option value="preparing">Preparing</option>
+      <option value="ready">Ready</option>
+      <option value="served">Served</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
+    <input type="date" class="form-control" style="width:170px" id="dateFilter" onchange="loadOrders()">
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:0">
+      <div class="table-wrap" id="orders-table"><div class="loading-center"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+  <div id="modal-area"></div>
+`;
+
+let allOrders = [], menuItems = [], tables = [];
+
+async function loadOrders() {
+  const status = document.getElementById('statusFilter').value;
+  const date   = document.getElementById('dateFilter').value;
+  let url = '/orders?';
+  if (status) url += `status=${status}&`;
+  if (date)   url += `date=${date}`;
+  try {
+    allOrders = await api.get(url);
+    renderOrders(allOrders);
+  } catch(e){ Toast.error(e.message); }
+}
+
+function filterOrders(){
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  renderOrders(allOrders.filter(o =>
+    String(o.id).includes(q) ||
+    (o.table_number||'').toLowerCase().includes(q) ||
+    o.status.includes(q) || o.order_type.includes(q)
+  ));
+}
+
+function renderOrders(orders){
+  const wrap = document.getElementById('orders-table');
+  if(!orders.length){
+    wrap.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><p>No orders found</p></div>';
+    return;
+  }
+  wrap.innerHTML=`<table>
+    <thead><tr><th>#ID</th><th>Table</th><th>Type</th><th>Items</th><th>Status</th><th>Staff</th><th>Time</th><th>Actions</th></tr></thead>
+    <tbody>${orders.map(o=>`
+      <tr>
+        <td class="fw-600">#${o.id}</td>
+        <td>${o.table_number||'—'}</td>
+        <td>${o.order_type}</td>
+        <td>${Array.isArray(o.items)?o.items.length:0} item(s)</td>
+        <td><span class="badge badge-${o.status}">${o.status}</span></td>
+        <td>${o.staff_name||'—'}</td>
+        <td style="font-size:.8rem;color:var(--text-muted)">${formatDate(o.created_at)}</td>
+        <td>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="viewOrder(${o.id})">View</button>
+            ${o.status!=='served'&&o.status!=='cancelled'?`<button class="btn btn-secondary btn-sm" onclick="openStatusModal(${o.id},'${o.status}')">Update</button>`:''}
+            ${o.status==='pending'||o.status==='preparing'?`<button class="btn btn-primary btn-sm" onclick="generateBill(${o.id})">Bill</button>`:''}
+          </div>
+        </td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function viewOrder(id){
+  try{
+    const o = await api.get(`/orders/${id}`);
+    const subtotal = o.items.reduce((s,i)=>s+i.quantity*parseFloat(i.unit_price),0);
+    showModal('Order #'+id,`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.875rem;margin-bottom:16px">
+        <div><span class="text-muted">Table:</span> ${o.table_number||'—'}</div>
+        <div><span class="text-muted">Type:</span> ${o.order_type}</div>
+        <div><span class="text-muted">Status:</span> <span class="badge badge-${o.status}">${o.status}</span></div>
+        <div><span class="text-muted">Staff:</span> ${o.staff_name||'—'}</div>
+        <div style="grid-column:1/-1"><span class="text-muted">Notes:</span> ${o.notes||'—'}</div>
+      </div>
+      <table style="font-size:.85rem">
+        <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+        <tbody>${o.items.map(i=>`
+          <tr>
+            <td>${i.name}</td>
+            <td>${i.quantity}</td>
+            <td>${formatCurrency(i.unit_price)}</td>
+            <td>${formatCurrency(i.quantity*i.unit_price)}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot><tr><td colspan="3" style="text-align:right;font-weight:600">Subtotal</td><td class="fw-600 text-gold">${formatCurrency(subtotal)}</td></tr></tfoot>
+      </table>
+    `,'',true);
+  }catch(e){Toast.error(e.message);}
+}
+
+function openStatusModal(id,current){
+  showModal('Update Order Status',`
+    <div class="form-group">
+      <label class="form-label">New Status</label>
+      <select class="form-control" id="newStatus">
+        ${['pending','preparing','ready','served','cancelled'].map(s=>`<option value="${s}"${s===current?' selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+  `,`<button class="btn btn-primary" onclick="updateStatus(${id})">Update</button>`);
+}
+
+async function updateStatus(id){
+  const status=document.getElementById('newStatus').value;
+  try{
+    await api.patch(`/orders/${id}/status`,{status});
+    Toast.success('Order status updated');
+    closeModal(); loadOrders();
+  }catch(e){Toast.error(e.message);}
+}
+
+async function generateBill(orderId){
+  try{
+    const bill = await api.post(`/bills/generate/${orderId}`,{tax_rate:5,discount:0,payment_method:'cash'});
+    Toast.success('Bill generated! #'+bill.id);
+    window.location.href='billing.html';
+  }catch(e){Toast.error(e.message);}
+}
+
+async function openNewOrderModal(){
+  if(!menuItems.length) menuItems = await api.get('/menu');
+  if(!tables.length)    tables    = await api.get('/tables');
+  const avail = tables.filter(t=>t.status==='available');
+  showModal('New Order',`
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Order Type</label>
+        <select class="form-control" id="orderType" onchange="toggleTable()">
+          <option value="dine-in">Dine-In</option>
+          <option value="takeaway">Takeaway</option>
+          <option value="delivery">Delivery</option>
+        </select>
+      </div>
+      <div class="form-group" id="tableGroup">
+        <label class="form-label">Table</label>
+        <select class="form-control" id="tableId">
+          <option value="">Select table</option>
+          ${avail.map(t=>`<option value="${t.id}">${t.table_number} (Cap: ${t.capacity})</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Notes</label>
+      <input class="form-control" id="orderNotes" placeholder="Special requests…">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Add Items</label>
+      <select class="form-control" id="itemSelect">
+        <option value="">— Select menu item —</option>
+        ${menuItems.filter(m=>m.available).map(m=>`<option value="${m.id}" data-price="${m.price}">${m.name} — ${formatCurrency(m.price)}</option>`).join('')}
+      </select>
+      <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addItemRow()">＋ Add Item</button>
+    </div>
+    <div id="items-list" style="margin-top:8px;display:flex;flex-direction:column;gap:8px"></div>
+    <div id="order-total" style="text-align:right;margin-top:12px;font-size:.95rem;font-weight:600;color:var(--gold)"></div>
+  `,`<button class="btn btn-primary" onclick="submitOrder()">Place Order</button>`);
+}
+
+const orderLines = [];
+function toggleTable(){
+  const t=document.getElementById('tableGroup');
+  if(t) t.style.display=document.getElementById('orderType').value==='dine-in'?'block':'none';
+}
+function addItemRow(){
+  const sel=document.getElementById('itemSelect');
+  if(!sel.value)return Toast.info('Select an item first');
+  const opt=sel.options[sel.selectedIndex];
+  const existing=orderLines.find(l=>l.id==sel.value);
+  if(existing){existing.qty++;renderLines();return;}
+  orderLines.push({id:sel.value,name:opt.text.split('—')[0].trim(),price:parseFloat(opt.dataset.price),qty:1});
+  renderLines();
+}
+function renderLines(){
+  const list=document.getElementById('items-list');
+  if(!list)return;
+  list.innerHTML=orderLines.map((l,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border-radius:7px;padding:8px 12px;font-size:.875rem">
+      <span style="flex:1">${l.name}</span>
+      <button class="btn btn-secondary btn-sm btn-icon" onclick="changeQty(${i},-1)">−</button>
+      <span style="width:24px;text-align:center">${l.qty}</span>
+      <button class="btn btn-secondary btn-sm btn-icon" onclick="changeQty(${i},1)">＋</button>
+      <span style="width:80px;text-align:right">${formatCurrency(l.price*l.qty)}</span>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="removeLine(${i})">✕</button>
+    </div>`).join('');
+  const total=orderLines.reduce((s,l)=>s+l.price*l.qty,0);
+  const tot=document.getElementById('order-total');
+  if(tot) tot.textContent=orderLines.length?`Total: ${formatCurrency(total)}`:'';
+}
+function changeQty(i,d){orderLines[i].qty=Math.max(1,orderLines[i].qty+d);renderLines();}
+function removeLine(i){orderLines.splice(i,1);renderLines();}
+
+async function submitOrder(){
+  if(!orderLines.length)return Toast.error('Add at least one item');
+  const type=document.getElementById('orderType').value;
+  const tableId=document.getElementById('tableId')?.value;
+  if(type==='dine-in'&&!tableId)return Toast.error('Select a table for dine-in');
+  try{
+    await api.post('/orders',{
+      table_id:tableId||null,
+      order_type:type,
+      notes:document.getElementById('orderNotes').value,
+      items:orderLines.map(l=>({menu_item_id:l.id,quantity:l.qty}))
+    });
+    orderLines.length=0;
+    Toast.success('Order placed!');
+    closeModal(); loadOrders();
+  }catch(e){Toast.error(e.message);}
+}
+
+// Modal helpers
+function showModal(title,body,footer='',wide=false){
+  document.getElementById('modal-area').innerHTML=`
+    <div class="modal-backdrop" id="modalBackdrop" onclick="backdropClose(event)">
+      <div class="modal" style="${wide?'max-width:680px':''}">
+        <div class="modal-header">
+          <span class="modal-title">${title}</span>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">${body}</div>
+        ${footer?`<div class="modal-footer">${footer}</div>`:''}
+      </div>
+    </div>`;
+}
+function closeModal(){document.getElementById('modal-area').innerHTML='';}
+function backdropClose(e){if(e.target.id==='modalBackdrop')closeModal();}
+
+loadOrders();
+</script>
+</body>
+</html>

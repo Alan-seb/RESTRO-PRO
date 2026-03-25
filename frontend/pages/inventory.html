@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventory — Restaurant MS</title>
+  <link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<script src="../js/api.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+renderLayout('inventory.html');
+const main = document.getElementById('main-content');
+main.innerHTML = `
+  <div class="page-header">
+    <div><h1 class="page-title">Inventory</h1><p class="page-subtitle">Track stock levels and get low-stock alerts</p></div>
+    <button class="btn btn-primary" onclick="openAddModal()">＋ Add Item</button>
+  </div>
+  <div class="stats-grid" id="inv-stats"></div>
+  <div class="filters-bar">
+    <input class="form-control search-box" id="searchInput" placeholder="Search inventory…" oninput="filterInv()">
+    <select class="form-control" style="width:160px" id="stockFilter" onchange="filterInv()">
+      <option value="">All Stock</option>
+      <option value="low">Low Stock Only</option>
+      <option value="ok">In Stock Only</option>
+    </select>
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:0">
+      <div class="table-wrap" id="inv-table"><div class="loading-center"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+  <div id="modal-area"></div>
+`;
+
+let allInv = [];
+
+async function loadInventory(){
+  try{
+    allInv = await api.get('/inventory');
+    const low   = allInv.filter(i=>parseFloat(i.quantity)<=parseFloat(i.min_threshold));
+    const total = allInv.reduce((s,i)=>s+parseFloat(i.quantity)*parseFloat(i.cost_per_unit),0);
+    document.getElementById('inv-stats').innerHTML=`
+      <div class="stat-card" style="--accent:var(--blue)">
+        <div class="stat-label">Total Items</div>
+        <div class="stat-value">${allInv.length}</div>
+        <div class="stat-meta">In inventory</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--red)">
+        <div class="stat-label">Low Stock</div>
+        <div class="stat-value">${low.length}</div>
+        <div class="stat-meta">Need restocking</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--gold)">
+        <div class="stat-label">Inventory Value</div>
+        <div class="stat-value">${formatCurrency(total)}</div>
+        <div class="stat-meta">Estimated cost</div>
+      </div>
+    `;
+    filterInv();
+  }catch(e){Toast.error(e.message);}
+}
+
+function filterInv(){
+  const q  = document.getElementById('searchInput').value.toLowerCase();
+  const sf = document.getElementById('stockFilter').value;
+  let items = allInv.filter(i=>{
+    if(q && !i.item_name.toLowerCase().includes(q)) return false;
+    const isLow = parseFloat(i.quantity)<=parseFloat(i.min_threshold);
+    if(sf==='low' && !isLow) return false;
+    if(sf==='ok'  &&  isLow) return false;
+    return true;
+  });
+  renderInv(items);
+}
+
+function renderInv(items){
+  const wrap = document.getElementById('inv-table');
+  if(!items.length){
+    wrap.innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><p>No inventory items found</p></div>';
+    return;
+  }
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Item Name</th><th>Unit</th><th>Quantity</th><th>Min Threshold</th><th>Cost/Unit</th><th>Stock Value</th><th>Status</th><th>Last Updated</th><th>Actions</th></tr></thead>
+    <tbody>${items.map(i=>{
+      const isLow = parseFloat(i.quantity)<=parseFloat(i.min_threshold);
+      return `
+      <tr>
+        <td class="fw-600">${i.item_name}</td>
+        <td>${i.unit}</td>
+        <td class="${isLow?'text-red fw-600':''}">${i.quantity}</td>
+        <td class="text-muted">${i.min_threshold}</td>
+        <td>${formatCurrency(i.cost_per_unit)}</td>
+        <td>${formatCurrency(parseFloat(i.quantity)*parseFloat(i.cost_per_unit))}</td>
+        <td><span class="badge badge-${isLow?'low':'ok'}">${isLow?'Low Stock':'In Stock'}</span></td>
+        <td style="font-size:.78rem;color:var(--text-muted)">${formatDate(i.updated_at)}</td>
+        <td>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick='openEditModal(${JSON.stringify(i)})'>Edit</button>
+            <button class="btn btn-success btn-sm" onclick="openRestockModal(${i.id},'${i.item_name}','${i.unit}')">Restock</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteItem(${i.id})">Delete</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('')}
+    </tbody></table>`;
+}
+
+function openAddModal(item=null){
+  showModal(item?'Edit Inventory Item':'Add Inventory Item',`
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Item Name *</label>
+        <input class="form-control" id="iName" value="${item?.item_name||''}" placeholder="e.g. Tomatoes">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Unit *</label>
+        <select class="form-control" id="iUnit">
+          ${['kg','g','litre','ml','pieces','packets','dozen','box'].map(u=>`<option value="${u}"${item?.unit===u?' selected':''}>${u}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Current Quantity</label>
+        <input class="form-control" id="iQty" type="number" step="0.01" value="${item?.quantity||0}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Min Threshold (alert below)</label>
+        <input class="form-control" id="iMin" type="number" step="0.01" value="${item?.min_threshold||5}">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Cost per Unit (₹)</label>
+      <input class="form-control" id="iCost" type="number" step="0.01" value="${item?.cost_per_unit||0}">
+    </div>
+  `,`<button class="btn btn-primary" onclick="saveItem(${item?.id||null})">Save</button>`);
+}
+
+function openEditModal(item){openAddModal(item);}
+
+function openRestockModal(id, name, unit){
+  showModal(`Restock: ${name}`,`
+    <div class="form-group">
+      <label class="form-label">Quantity to Add (${unit})</label>
+      <input class="form-control" id="restockQty" type="number" step="0.01" placeholder="0" min="0.01">
+    </div>
+  `,`<button class="btn btn-success" onclick="restockItem(${id})">Restock</button>`);
+}
+
+async function saveItem(id){
+  const body={
+    item_name:document.getElementById('iName').value.trim(),
+    unit:document.getElementById('iUnit').value,
+    quantity:parseFloat(document.getElementById('iQty').value)||0,
+    min_threshold:parseFloat(document.getElementById('iMin').value)||5,
+    cost_per_unit:parseFloat(document.getElementById('iCost').value)||0,
+  };
+  if(!body.item_name) return Toast.error('Item name is required');
+  try{
+    if(id) await api.put(`/inventory/${id}`,body);
+    else   await api.post('/inventory',body);
+    Toast.success('Inventory item saved!');
+    closeModal(); loadInventory();
+  }catch(e){Toast.error(e.message);}
+}
+
+async function restockItem(id){
+  const qty = parseFloat(document.getElementById('restockQty').value);
+  if(!qty||qty<=0) return Toast.error('Enter a valid quantity');
+  try{
+    await api.patch(`/inventory/${id}/restock`,{quantity:qty});
+    Toast.success('Stock updated!');
+    closeModal(); loadInventory();
+  }catch(e){Toast.error(e.message);}
+}
+
+async function deleteItem(id){
+  if(!confirm('Delete this inventory item?')) return;
+  try{
+    await api.delete(`/inventory/${id}`);
+    Toast.success('Item deleted');
+    loadInventory();
+  }catch(e){Toast.error(e.message);}
+}
+
+function showModal(title,body,footer=''){
+  document.getElementById('modal-area').innerHTML=`
+    <div class="modal-backdrop" id="modalBackdrop" onclick="backdropClose(event)">
+      <div class="modal">
+        <div class="modal-header"><span class="modal-title">${title}</span><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${body}</div>
+        ${footer?`<div class="modal-footer">${footer}</div>`:''}
+      </div>
+    </div>`;
+}
+function closeModal(){document.getElementById('modal-area').innerHTML='';}
+function backdropClose(e){if(e.target.id==='modalBackdrop')closeModal();}
+
+loadInventory();
+</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Staff — Restaurant MS</title>
+  <link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<script src="../js/api.js"></script>
+<script src="../js/layout.js"></script>
+<script>
+renderLayout('staff.html');
+const main = document.getElementById('main-content');
+main.innerHTML = `
+  <div class="page-header">
+    <div><h1 class="page-title">Staff</h1><p class="page-subtitle">Manage team members and their roles</p></div>
+    <button class="btn btn-primary" onclick="openAddModal()">＋ Add Staff</button>
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:0">
+      <div class="table-wrap" id="staff-table"><div class="loading-center"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+  <div id="modal-area"></div>
+`;
+
+async function loadStaff(){
+  try{
+    const users = await api.get('/users');
+    const wrap  = document.getElementById('staff-table');
+    if(!users.length){
+      wrap.innerHTML='<div class="empty-state"><div class="empty-icon">👤</div><p>No staff members found</p></div>';
+      return;
+    }
+    wrap.innerHTML=`<table>
+      <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead>
+      <tbody>${users.map(u=>`
+        <tr>
+          <td>${u.id}</td>
+          <td class="fw-600">${u.name}</td>
+          <td>${u.email}</td>
+          <td><span class="badge badge-${u.role}">${u.role}</span></td>
+          <td style="font-size:.8rem;color:var(--text-muted)">${new Date(u.created_at).toLocaleDateString('en-IN')}</td>
+          <td>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-secondary btn-sm" onclick='openEditModal(${JSON.stringify(u)})'>Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id})">Delete</button>
+            </div>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  }catch(e){Toast.error(e.message);}
+}
+
+function openAddModal(){
+  showModal('Add Staff Member',`
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Full Name *</label>
+        <input class="form-control" id="sName" placeholder="John Doe">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role</label>
+        <select class="form-control" id="sRole">
+          <option value="staff">Staff</option>
+          <option value="cashier">Cashier</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email *</label>
+      <input class="form-control" id="sEmail" type="email" placeholder="john@restaurant.com">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password *</label>
+      <input class="form-control" id="sPass" type="password" placeholder="Min 6 characters">
+    </div>
+  `,`<button class="btn btn-primary" onclick="saveUser(null)">Add Member</button>`);
+}
+
+function openEditModal(u){
+  showModal('Edit Staff Member',`
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Full Name *</label>
+        <input class="form-control" id="sName" value="${u.name}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role</label>
+        <select class="form-control" id="sRole">
+          ${['staff','cashier','manager','admin'].map(r=>`<option value="${r}"${r===u.role?' selected':''}>${r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email *</label>
+      <input class="form-control" id="sEmail" type="email" value="${u.email}">
+    </div>
+  `,`<button class="btn btn-primary" onclick="saveUser(${u.id})">Save Changes</button>`);
+}
+
+async function saveUser(id){
+  const name  = document.getElementById('sName').value.trim();
+  const email = document.getElementById('sEmail').value.trim();
+  const role  = document.getElementById('sRole').value;
+  if(!name||!email) return Toast.error('Name and email are required');
+  try{
+    if(id){
+      await api.put(`/users/${id}`,{name,email,role});
+    } else {
+      const pass = document.getElementById('sPass').value;
+      if(!pass||pass.length<6) return Toast.error('Password must be at least 6 characters');
+      await api.post('/users',{name,email,password:pass,role});
+    }
+    Toast.success('Staff member saved!');
+    closeModal(); loadStaff();
+  }catch(e){Toast.error(e.message);}
+}
+
+async function deleteUser(id){
+  const current = Auth.getUser();
+  if(current?.id===id) return Toast.error("You can't delete your own account");
+  if(!confirm('Delete this staff member?')) return;
+  try{
+    await api.delete(`/users/${id}`);
+    Toast.success('Staff member deleted');
+    loadStaff();
+  }catch(e){Toast.error(e.message);}
+}
+
+function showModal(title,body,footer=''){
+  document.getElementById('modal-area').innerHTML=`
+    <div class="modal-backdrop" id="modalBackdrop" onclick="backdropClose(event)">
+      <div class="modal">
+        <div class="modal-header"><span class="modal-title">${title}</span><button class="modal-close" onclick="closeModal()">×</button></div>
+        <div class="modal-body">${body}</div>
+        ${footer?`<div class="modal-footer">${footer}</div>`:''}
+      </div>
+    </div>`;
+}
+function closeModal(){document.getElementById('modal-area').innerHTML='';}
+function backdropClose(e){if(e.target.id==='modalBackdrop')closeModal();}
+
+loadStaff();
+</script>
+</body>
+</html>
